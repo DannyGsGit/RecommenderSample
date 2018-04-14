@@ -1,0 +1,118 @@
+---
+title: "Recommender_Item"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+library(readxl)
+library(here)
+library(ggplot2)
+library(tidyverse)
+library(arules)
+library(arulesViz)
+```
+
+# Load Data
+Load the shopping cart dataset.
+
+```{r}
+# Load carts and only keep complete records
+carts <- readxl::read_excel(here::here("Data/OnlineRetail.xlsx"))
+carts <- carts[complete.cases(carts),]
+```
+
+Next, we want to do some light pre-processing of the data
+```{r}
+carts <- carts %>%
+  mutate(Description = as.factor(Description),
+         Country = as.factor(Country),
+         Date = as.Date(InvoiceDate),
+         Time = format(InvoiceDate, "%H:%M:%S"),
+         InvoiceNo = as.numeric(as.character(InvoiceNo)))
+
+glimpse(carts)
+```
+
+
+# Summary Stats
+How big are carts?
+```{r}
+carts %>% 
+  group_by(InvoiceNo) %>% 
+  summarize(n_items = mean(Quantity)) %>%
+  ggplot(aes(x=n_items))+
+  geom_histogram(fill="indianred", bins = 100000) + 
+  geom_rug()+
+  coord_cartesian(xlim=c(0,80))
+```
+
+Most popular products?
+```{r}
+popCodes <- carts %>%
+  group_by(StockCode, Description) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  arrange(desc(Count))
+
+head(popCodes, n = 10)
+
+hist(popCodes$Count, breaks = 30)
+  
+```
+
+# Build Association Rules
+
+
+```{r}
+library(plyr)
+itemList <- ddply(carts,
+                  c("CustomerID","Date"),
+                  function(df1) paste(df1$Description, collapse = ","))
+```
+```{r}
+itemList$CustomerID <- NULL
+itemList$Date <- NULL
+colnames(itemList) <- c("items")
+
+# Export the transactions as a csv
+write.csv(itemList, here::here("Data/market_basket.csv"), quote = FALSE, row.names = FALSE)
+```
+
+# Load Baskets
+```{r}
+tr <- read.transactions(here::here('Data/market_basket.csv'), format = 'basket', sep=',', quote = '')
+tr
+summary(tr)
+```
+
+Create the rules
+```{r}
+rules <- apriori(tr, parameter = list(supp=0.001, conf=0.8))
+rules <- sort(rules, by='confidence', decreasing = TRUE)
+summary(rules)
+```
+
+Review some top rules
+```{r}
+inspect(rules[1:20])
+
+# Plot
+topRules <- rules[1:20]
+plot(topRules)
+
+# Graph plot
+plot(topRules, method="graph")
+
+# Group Plot
+plot(topRules, method = "grouped")
+```
+
+
+
+The End.
