@@ -18,38 +18,45 @@ library(arules)
 library(arulesViz)
 ```
 
+# Purpose
+This notebook walks through the generation of a simple Association Rules engine. Not strictly a recommender in the same sense as collaborative filtering, Association examines historical market baskets to build identify relationships between items.
+
 # Load Data
-Load the shopping cart dataset.
+Load the shopping cart dataset. Inspecting the data frame, we see that orders are identified by InvoiceNo. Items are keyed on StockCode, with Description providing some insight about what the item is. 
 
 ```{r}
 # Load carts and only keep complete records
 carts <- readxl::read_excel(here::here("Data/OnlineRetail.xlsx"))
 carts <- carts[complete.cases(carts),]
-```
 
-Next, we want to do some light pre-processing of the data
-```{r}
+# Next, we want to do some light pre-processing of the data
 carts <- carts %>%
   mutate(Description = as.factor(Description),
-         Country = as.factor(Country),
-         Date = as.Date(InvoiceDate),
-         Time = format(InvoiceDate, "%H:%M:%S"),
+         StockCode = as.factor(StockCode),
          InvoiceNo = as.numeric(as.character(InvoiceNo)))
 
-glimpse(carts)
+head(carts)
 ```
 
+Note that the carts include returns. We will filter these out.
+```{r}
+hist(carts$Quantity, breaks = 30)
+# Remove returned items (Qty < 1)
+carts <- carts %>% dplyr::filter(Quantity > 0)
+```
 
 # Summary Stats
-How big are carts?
+
+Before jumping into the Association Rules, let's poke at the dataset a bit.
+
+How many different items do people tend to put in their carts? Importantly, we see a wide variety of items in user's carts- this provides a good basis for finding relationships.
 ```{r}
-carts %>% 
-  group_by(InvoiceNo) %>% 
-  summarize(n_items = mean(Quantity)) %>%
+carts %>%
+  group_by(InvoiceNo) %>%
+  summarize(n_items = n()) %>%
   ggplot(aes(x=n_items))+
-  geom_histogram(fill="indianred", bins = 100000) + 
-  geom_rug()+
-  coord_cartesian(xlim=c(0,80))
+  geom_histogram(bins = 100) +
+  coord_cartesian(xlim = c(1, 150))
 ```
 
 Most popular products?
@@ -66,35 +73,50 @@ hist(popCodes$Count, breaks = 30)
   
 ```
 
-# Build Association Rules
+# Format Market Baskets
 
+We need to convert the data frame into a transaction format. First, each transaction is converted into a comma separated list. These baskets are then converted to factor type before the object is converted to a transaction format.
+```{r}
+# library(plyr)
 
-```{r}
-library(plyr)
-itemList <- ddply(carts,
-                  c("CustomerID","Date"),
-                  function(df1) paste(df1$Description, collapse = ","))
-```
-```{r}
-itemList$CustomerID <- NULL
-itemList$Date <- NULL
+# itemList <- ddply(carts,
+#                   c("InvoiceNo"),
+#                   function(df1) paste(df1$Description, collapse = ","))
+
+itemList <- plyr::ddply(carts,c("InvoiceNo"), 
+                       function(df1)paste(df1$Description, 
+                       collapse = ","))
+
+itemList$InvoiceNo <- NULL
+
 colnames(itemList) <- c("items")
 
-# Export the transactions as a csv
+# Convert the dataframe to transactions class
 write.csv(itemList, here::here("Data/market_basket.csv"), quote = FALSE, row.names = FALSE)
-```
+tr <- read.transactions(here::here("Data/market_basket.csv"), format = 'basket', sep=',')# convert to 'transactions' class
 
-# Load Baskets
-```{r}
-tr <- read.transactions(here::here('Data/market_basket.csv'), format = 'basket', sep=',', quote = '')
+# Let's see what we have...
 tr
 summary(tr)
+
+LIST(head(tr, 3))
 ```
 
-Create the rules
+Finally, we create the rules. Start by defining some parameters around support and confidence.
+* Support: Percentage of transactions in which a relationship occurs. Ex: If a pattern appears in 12 transactions out of 100, support is 0.12.
+* Confidence: How often the rule is found to be true. For example, for rule A -> B, if we find that 70% of carts containing A also contain B, we have a confidence of 0.7.
+
 ```{r}
-rules <- apriori(tr, parameter = list(supp=0.001, conf=0.8))
+
+supportThreshold <- 20 / nrow(itemList)
+confidence <- 0.8
+
+rules <- apriori(tr, parameter = list(supp = supportThreshold, conf = confidence))
+
+
 rules <- sort(rules, by='confidence', decreasing = TRUE)
+
+
 summary(rules)
 ```
 
